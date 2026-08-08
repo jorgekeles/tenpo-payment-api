@@ -21,34 +21,34 @@ jobs:
         working-directory: ./terraform
 
     steps:
-      # 1. Checkout the code
+      # 1. Descargar el código del repositorio
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      # 2. Setup Terraform CLI
+      # 2. Configurar la CLI de Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: "1.5.7"
 
-      # 3. Check code formatting
+      # 3. Verificar el formato del código
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
 
-      # 4. Initialize working directory (necessary for validation)
+      # 4. Inicializar el directorio de trabajo (necesario para la validación)
       - name: Terraform Init
         run: terraform init -backend=false
 
-      # 5. Validate configuration syntax
+      # 5. Validar la sintaxis de la configuración
       - name: Terraform Validate
         run: terraform validate
 
-      # 6. Static Security Analysis (Trivy Scan for IaC)
+      # 6. Análisis estático de seguridad (Escaneo con Trivy para IaC)
       - name: Run Trivy IaC Security Scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'config'
           hide-progress: false
-          exit-code: '1' # Fail build if high/critical issues are found
+          exit-code: '1' # Falla la compilación si encuentra problemas altos o críticos
           ignore-unfixed: true
           severity: 'HIGH,CRITICAL'

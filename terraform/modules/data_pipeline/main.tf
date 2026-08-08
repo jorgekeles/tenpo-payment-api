@@ -1,6 +1,6 @@
 data "google_project" "project" {}
 
-# 1. Pub/Sub Topic for transaction events
+# 1. Tópico de Pub/Sub para eventos de transacción
 resource "google_pubsub_topic" "payment_events" {
   name = "tenpo-payment-events-${var.environment}"
 
@@ -10,13 +10,13 @@ resource "google_pubsub_topic" "payment_events" {
   }
 }
 
-# 2. BigQuery Dataset for analytical ingestion
+# 2. Dataset de BigQuery para ingesta analítica
 resource "google_bigquery_dataset" "analytics" {
   dataset_id                  = "tenpo_analytics_${var.environment}"
   friendly_name               = "Tenpo Analytics Dataset"
   description                 = "Dataset for payment transaction events ingestion"
   location                    = var.region
-  default_table_expiration_ms = 31536000000 # 1 year in ms
+  default_table_expiration_ms = 31536000000 # 1 año en ms
 
   labels = {
     environment = var.environment
@@ -24,11 +24,11 @@ resource "google_bigquery_dataset" "analytics" {
   }
 }
 
-# 3. BigQuery Table for structured transaction data
+# 3. Tabla de BigQuery para los datos estructurados de transacciones
 resource "google_bigquery_table" "payment_transactions" {
   dataset_id          = google_bigquery_dataset.analytics.dataset_id
   table_id            = "payment_transactions"
-  deletion_protection = false # Enabled/disabled for safety in challenges
+  deletion_protection = false # Deshabilitado para facilitar pruebas y limpieza en el desafío
 
   schema = <<EOF
 [
@@ -72,7 +72,7 @@ resource "google_bigquery_table" "payment_transactions" {
 EOF
 }
 
-# 4. IAM Permissions for Pub/Sub Service Identity to write into BigQuery
+# 4. Permisos IAM para que la identidad de servicio de Pub/Sub escriba en BigQuery
 resource "google_bigquery_dataset_iam_member" "pubsub_metadata" {
   dataset_id = google_bigquery_dataset.analytics.dataset_id
   role       = "roles/bigquery.metadataViewer"
@@ -85,7 +85,7 @@ resource "google_bigquery_dataset_iam_member" "pubsub_data_editor" {
   member     = "serviceAccount:service-${data.google_project.project.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }
 
-# 5. Pub/Sub to BigQuery Direct Subscription
+# 5. Suscripción directa de Pub/Sub a BigQuery
 resource "google_pubsub_subscription" "bq_ingest" {
   name  = "tenpo-payment-bq-sub-${var.environment}"
   topic = google_pubsub_topic.payment_events.name
@@ -93,8 +93,8 @@ resource "google_pubsub_subscription" "bq_ingest" {
   bigquery_config {
     table                   = "${var.project_id}:${google_bigquery_table.payment_transactions.dataset_id}.${google_bigquery_table.payment_transactions.table_id}"
     use_topic_schema        = false
-    write_metadata          = false # We only want the clean transaction payload columns
-    drop_unknown_properties = true  # Ignore properties not in BQ schema
+    write_metadata          = false # Solo queremos las columnas del payload limpio de la transacción
+    drop_unknown_properties = true  # Ignora propiedades que no estén en el esquema de BigQuery
   }
 
   depends_on = [

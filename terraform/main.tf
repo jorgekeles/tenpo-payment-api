@@ -13,7 +13,7 @@ provider "google" {
   region  = var.region
 }
 
-# 1. Network Module (VPC, Subnets, NAT, VPC Connector)
+# 1. Módulo de Red (VPC, subredes, NAT, VPC Connector)
 module "network" {
   source      = "./modules/network"
   project_id  = var.project_id
@@ -21,7 +21,7 @@ module "network" {
   environment = var.environment
 }
 
-# 2. Data Pipeline Module (Pub/Sub topic, BigQuery and direct subscription)
+# 2. Módulo del Pipeline de Datos (Tópico de Pub/Sub, BigQuery y suscripción directa)
 module "data_pipeline" {
   source      = "./modules/data_pipeline"
   project_id  = var.project_id
@@ -29,7 +29,7 @@ module "data_pipeline" {
   environment = var.environment
 }
 
-# 3. Service Module (Cloud Run, Service Account, Load Balancer, Cloud Armor)
+# 3. Módulo del Servicio (Cloud Run, Service Account, Load Balancer, Cloud Armor)
 module "service" {
   source            = "./modules/service"
   project_id        = var.project_id
@@ -39,5 +39,5 @@ module "service" {
   vpc_connector_id  = module.network.vpc_connector_id
   pubsub_topic_name = module.data_pipeline.pubsub_topic_name
   pubsub_topic_id   = module.data_pipeline.pubsub_topic_id
-  container_image   = "gcr.io/cloudrun/hello" # Placeholder container image
+  container_image   = "gcr.io/cloudrun/hello" # Imagen de contenedor temporal (placeholder)
 }

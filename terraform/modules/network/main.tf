@@ -1,26 +1,26 @@
-# 1. VPC Network
+# 1. Red VPC
 resource "google_compute_network" "vpc" {
   name                    = "tenpo-vpc-${var.environment}"
   auto_create_subnetworks = false
 }
 
-# 2. Private Subnet for internal workloads
+# 2. Subred privada para cargas de trabajo internas
 resource "google_compute_subnetwork" "private_subnet" {
   name                     = "tenpo-private-subnet-${var.environment}"
   ip_cidr_range            = "10.0.1.0/24"
   region                   = var.region
   network                  = google_compute_network.vpc.id
-  private_ip_google_access = true # Required for instances without public IPs to access Google APIs
+  private_ip_google_access = true # Requerido para acceder a las APIs de Google de forma privada
 }
 
-# 3. Cloud Router (Prerequisite for Cloud NAT)
+# 3. Cloud Router (Requisito para Cloud NAT)
 resource "google_compute_router" "router" {
   name    = "tenpo-router-${var.environment}"
   region  = var.region
   network = google_compute_network.vpc.id
 }
 
-# 4. Cloud NAT (Allows private resources to access the Internet)
+# 4. Cloud NAT (Permite a los recursos privados salir a Internet)
 resource "google_compute_router_nat" "nat" {
   name                               = "tenpo-nat-${var.environment}"
   router                             = google_compute_router.router.name
@@ -35,11 +35,11 @@ resource "google_compute_router_nat" "nat" {
 }
 
 # 5. Serverless VPC Access Connector
-# Allows Serverless workloads (like Cloud Run) to communicate privately with resources inside the VPC
+# Permite que los servicios Serverless (como Cloud Run) se comuniquen de forma privada dentro de la VPC
 resource "google_vpc_access_connector" "connector" {
   name          = "tenpo-vpc-conn-${var.environment}"
   region        = var.region
-  ip_cidr_range = "10.8.0.0/28" # Must be a /28 block and not overlap with other subnets
+  ip_cidr_range = "10.8.0.0/28" # Debe ser un bloque /28 y no solaparse con otras subredes
   network       = google_compute_network.vpc.name
   min_instances = 2
   max_instances = 10
