@@ -24,5 +24,5 @@ module "service" {
   vpc_connector_id  = module.network.vpc_connector_id
   pubsub_topic_name = module.data_pipeline.pubsub_topic_name
   pubsub_topic_id   = module.data_pipeline.pubsub_topic_id
-  container_image   = "gcr.io/cloudrun/hello" # Imagen de contenedor temporal (placeholder)
+  container_image   = "gcr.io/cloudrun/hello" # Imagen temporal
 }
