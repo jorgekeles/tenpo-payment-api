@@ -168,3 +168,16 @@ resource "google_compute_global_forwarding_rule" "http" {
   target                = google_compute_target_http_proxy.http_proxy.id
   ip_address            = google_compute_global_address.lb_ip.id
 }
+
+# Repositorio de Artifact Registry para almacenar las imágenes de Docker de la API
+resource "google_artifact_registry_repository" "tenpo_repo" {
+  location      = var.region
+  repository_id = "tenpo-repo"
+  description   = "Repositorio Docker para almacenar las imagenes de payment-api"
+  format        = "DOCKER"
+
+  labels = {
+    environment = var.environment
+    managed_by  = "terraform"
+  }
+}
