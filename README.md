@@ -57,7 +57,7 @@ Para la entrada de tráfico público, evitamos exponer directamente la URL por d
 * **Justificación:** Al tratarse de un neobanco y un servicio financiero crítico que procesa pagos reales, la seguridad perimetral no es negociable. Exponer la API directamente a internet sin protección sería un riesgo inaceptable.
 
 #### Procesamiento de Eventos: Pub/Sub
-Elegimos **Pub/Sub** como nuestro bus de eventos para desacoplar el flujo de la transacción en tiempo real del análisis de datos posterior. En cuanto la API procesa el pago, publica el evento en el tópico `payment-events` y responde inmediatamente al cliente. Así, si los sistemas analíticos o de riesgo experimentan problemas o caídas, la transacción de pago principal no se ve afectada y los eventos quedan guardados de forma segura en la cola.
+Elegimos **Pub/Sub** como nuestro bus de eventos para desacoplar el flujo de la transacción en tiempo real del análisis de datos posterior. In cuanto la API procesa el pago, publica el evento en el tópico `payment-events` y responde inmediatamente al cliente. Así, si los sistemas analíticos o de riesgo experimentan problemas o caídas, la transacción de pago principal no se ve afectada y los eventos quedan guardados de forma segura en la cola.
 
 * **El costo de esta decisión:** Los sistemas orientados a eventos nos obligan a lidiar con la semántica de entrega *at-least-once* (al menos una vez).
 * **Mitigación:** Esto requiere que los consumidores downstream (los servicios que procesen estos eventos más adelante) sean idempotentes, es decir, capaces de manejar el mismo evento varias veces sin duplicar operaciones.
@@ -114,4 +114,104 @@ Si tuviéramos que migrar a otro proveedor (por ejemplo, AWS o Azure), implicar�
 
 ## Desafío 3: Despliegue de payment-api
 
-*Próximamente: Código de la aplicación, pipeline de CI/CD y logs estructurados.*
+El microservicio `payment-api` está desarrollado en **Python (Flask)** de forma simple y minimalista, optimizado para ejecutarse en Cloud Run de forma privada.
+
+### Lógica del Servicio (`app/main.py`)
+- **Endpoint `/payments` (POST)**: Recibe y procesa las solicitudes de pago. Valida que el payload contenga todos los campos mandatorios (`transaction_id`, `user_id`, `amount`, `currency`) y comprueba que el monto sea un valor numérico y mayor que cero.
+- **Integración con Pub/Sub**: Si los datos son válidos, publica la transacción de inmediato en el tópico `tenpo-payment-events-dev` con estado `SUCCESS` y fecha en formato ISO 8601.
+- **Health Check (`/` - GET)**: Endpoint básico de estado saludable para los chequeos de ciclo de vida de Google Cloud Run.
+
+---
+
+### Preguntas del Desafío
+
+#### Una vez que el evento llega al topic, ¿qué necesitas construir para que aparezca en BigQuery?
+
+**Nuestra Solución (Suscripción Directa)**
+Para esta arquitectura, implementamos la **Suscripción Directa de Pub/Sub a BigQuery (Direct Subscription)** directamente desde Terraform. Gracias a esto, **no es necesario construir ningún desarrollo adicional** (como funciones intermedias o pipelines de datos). 
+
+Los requerimientos de configuración fueron:
+1. Crear el recurso `google_pubsub_subscription` y asociarlo a la tabla destino de BigQuery.
+2. Otorgar permisos de escritura de datos (`roles/bigquery.dataEditor`) y lectura de esquema (`roles/bigquery.metadataViewer`) a la Service Account del servicio Pub/Sub (`service-PROJECT_NUMBER@gcp-sa-pubsub.iam.gserviceaccount.com`) sobre el dataset analítico.
+
+**Otras alternativas (y por qué no las elegimos):**
+* **Pipeline en Cloud Dataflow**: Requiere desplegar y mantener un pipeline (usualmente basado en plantillas Apache Beam de GCP). Es la mejor opción si necesitáramos hacer transformaciones avanzadas, limpiezas complejas o agregaciones en ventanas de tiempo *antes* de insertar los datos. No la elegimos porque añade sobrecarga de código, complejidad de monitoreo y costos fijos de servidores (Workers) innecesarios para esta carga.
+* **Cloud Functions (Triggered por Pub/Sub)**: Una función serverless en Python que se activa en cada mensaje recibido y realiza inserciones en la tabla mediante el cliente SDK de BigQuery. Útil para lógica de enrutamiento dinámico simple. No la elegimos porque requiere programar, probar y mantener código de integración personalizado, mientras que la Suscripción Directa resuelve todo de forma 100% administrada e integrada por la nube.
+
+---
+
+### Logs Estructurados
+
+La aplicación genera logs estructurados formateados en JSON y los escribe directamente en la salida estándar (`stdout`), permitiendo que **Google Cloud Logging** los capture, procese y filtre de manera nativa sin necesidad de agentes externos.
+
+#### Ejemplo de Pago Exitoso (INFO)
+```json
+{
+  "level": "INFO",
+  "message": "Pago procesado exitosamente",
+  "transaction_id": "tx-12345",
+  "user_id": "usr-8877",
+  "amount": 25000.0,
+  "currency": "CLP",
+  "status": "SUCCESS",
+  "pubsub_message_id": "112233445566",
+  "duration_ms": 12.4,
+  "timestamp": "2026-08-08T20:15:00Z"
+}
+```
+
+#### Ejemplo de Pago Fallido (ERROR)
+```json
+{
+  "level": "ERROR",
+  "message": "Fallo en el procesamiento de pago",
+  "error_code": "INVALID_AMOUNT",
+  "error_message": "El monto de la transaccion debe ser mayor a cero",
+  "status": "FAILED",
+  "duration_ms": 1.2,
+  "timestamp": "2026-08-08T20:16:12Z",
+  "transaction_id": "tx-54321"
+}
+```
+
+---
+
+### Ejemplos de Consumo (Pruebas Manuales)
+
+#### Petición Exitosa (Status 201)
+```bash
+curl -X POST https://<LB-IP-O-DOMINIO>/payments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transaction_id": "tx-9999",
+    "user_id": "usr-5544",
+    "amount": 150.50,
+    "currency": "USD"
+  }'
+```
+**Respuesta:**
+```json
+{
+  "message": "Payment processed",
+  "transaction_id": "tx-9999",
+  "status": "SUCCESS"
+}
+```
+
+#### Petición Inválida (Status 400 - Monto Negativo)
+```bash
+curl -X POST https://<LB-IP-O-DOMINIO>/payments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "transaction_id": "tx-9999",
+    "user_id": "usr-5544",
+    "amount": -50.00,
+    "currency": "USD"
+  }'
+```
+**Respuesta:**
+```json
+{
+  "error": "Amount must be greater than zero"
+}
+```
