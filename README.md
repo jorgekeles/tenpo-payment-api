@@ -69,13 +69,48 @@ Para mover los datos de transacciones a **BigQuery**, optamos por la funcionalid
 * **Justificación:** Nos ahorramos mantener código de integración y eliminamos los costos de infraestructura asociados a tener un job de Dataflow corriendo 24/7. Las transformaciones complejas las podemos resolver directamente en BigQuery mediante vistas o procesos SQL batch posteriores.
 
 #### Orquestación y Machine Learning: Cloud Composer + Vertex AI
-Con los datos transaccionales almacenados en BigQuery, **Cloud Composer** (Airflow administrado) orquesta los flujos de trabajo batch periódicos (por ejemplo, cada noche). Estos flujos estructuran, limpian y agregan la información de pagos para alimentar los datasets y feature stores de **Vertex AI**, permitiendo entrenar y actualizar de forma constante los modelos de detección de fraude y evaluación de riesgo.
+Con los datos transaccionales almacenados en BigQuery, **Cloud Composer** (Airflow administrado) orquesta los flujos de trabajo batch periódicos (por ejemplo, cada noche). Estos flujos estructuran, limpiian y agregan la información de pagos para alimentar los datasets y feature stores de **Vertex AI**, permitiendo entrenar y actualizar de forma constante los modelos de detección de fraude y evaluación de riesgo.
 
 ---
 
 ## Desafío 2: Infraestructura como Código (IaC)
 
-*Próximamente: Archivos de Terraform y justificación de red privada.*
+Toda la infraestructura está automatizada con **Terraform** bajo un diseño modular y desacoplado, pensado como una **plataforma reusable**. Esto establece el estándar para que otros squads del banco puedan desplegar nuevos microservicios de manera idéntica y segura.
+
+### Estructura de Módulos
+- **`modules/network`**: Crea una VPC dedicada, subredes totalmente privadas, un Cloud NAT para permitir salidas seguras a internet y un Serverless VPC Access Connector.
+- **`modules/service`**: Despliega el microservicio en Cloud Run de forma 100% privada (bloqueando tráfico directo de internet y permitiendo solo el Load Balancer y la VPC). Además, provisiona su Service Account con el rol `logging.logWriter` e IAM de mínimo privilegio.
+- **`modules/data_pipeline`**: Crea el tópico de Pub/Sub `payment-events`, el dataset/tabla en BigQuery y la suscripción directa entre ellos.
+
+### Justificación de Seguridad y Red Privada
+Para proteger el flujo transaccional y los datos de los usuarios:
+* **Sin IPs Públicas**: Ninguno de los recursos internos del sistema tiene una IP pública direccionable.
+* **Egreso Seguro (Cloud NAT)**: Si los servicios privados necesitan consumir APIs externas, el tráfico de salida se enruta a través de la VPC hacia el Cloud NAT, enmascarando las comunicaciones y protegiendo las identidades internas de la red.
+* **Acceso Privado a APIs de Google**: La subred privada tiene habilitado `private_ip_google_access = true`. Esto permite que la API y otros recursos del VPC se comuniquen de forma privada con servicios administrados de Google (como Pub/Sub, BigQuery o Secret Manager) sin tocar internet.
+
+---
+
+### Preguntas del Desafío
+
+#### 1. ¿Es tu diseño escalable? Justifica.
+Sí, la arquitectura está pensada para escalar horizontalmente de forma automática y transparente en cada una de sus capas:
+
+- **Cómputo (Cloud Run)**: Es completamente serverless y autoadministrado. Si la API recibe una ráfaga masiva de solicitudes de pagos, Cloud Run escala levantando nuevas instancias de contenedores en cuestión de segundos y las destruye cuando el tráfico disminuye, manejando picos de concurrencia sin intervención manual.
+- **Buffer y Desacoplamiento (Pub/Sub)**: Actúa como amortiguador de tráfico. Si por algún motivo BigQuery o los consumidores downstream experimentan lentitud, Pub/Sub retiene los mensajes de forma duradera y persistente en cola, asegurando que no se pierda ninguna transacción y liberando inmediatamente a la API de pagos de esa espera.
+- **Data Warehouse (BigQuery)**: El motor analítico de BigQuery es serverless. Separa el almacenamiento del cómputo y escala dinámicamente para procesar petabytes de datos en segundos. Al usar la suscripción directa de Pub/Sub, la escritura e ingesta masiva se manejan nativamente a escala por GCP.
+- **Entrada (Load Balancer)**: El balanceador global de GCP distribuye la carga en la red de Google Edge, mitigando ataques de denegación de servicio (DDoS) a nivel de infraestructura antes de que lleguen a nuestro cómputo.
+
+#### 2. ¿Qué tan acoplado está a GCP y qué implicaría migrar a otro provider?
+El diseño lógico de la arquitectura es genérico y sigue patrones comunes de microservicios (API -> Bus de Eventos -> Data Warehouse -> Orquestador). Sin embargo, la implementación física en Terraform está fuertemente acoplada a las herramientas nativas de GCP para aprovechar al máximo el modelo serverless y reducir costos de mantenimiento.
+
+Si tuviéramos que migrar a otro proveedor (por ejemplo, AWS o Azure), implicaría los siguientes cambios:
+
+* **Infraestructura como Código (IaC)**: Habría que reescribir prácticamente todos los módulos de Terraform, ya que las llamadas a la API del proveedor, tipos de recursos y sintaxis son totalmente diferentes en AWS/Azure, aunque mantendríamos la lógica del pipeline de GitHub Actions en un 90%.
+* **Reemplazo de Componentes**:
+  - **Cloud Run** $\rightarrow$ Migraría a **AWS App Runner** o **Azure Container Apps**. Si buscamos portabilidad multicloud absoluta, tendríamos que adoptar Kubernetes (EKS/AKS), lo cual incrementaría fuertemente la complejidad operativa y costos.
+  - **Pub/Sub** $\rightarrow$ Se reemplazaría por **AWS Kinesis / SQS** o **Azure Event Hubs / Service Bus**.
+  - **BigQuery** $\rightarrow$ Se reemplazaría por **AWS Redshift** o **Azure Synapse**. (Perderíamos la funcionalidad nativa de Direct Subscription de Pub/Sub, por lo que tendríamos que agregar y mantener código intermedio, como un pipeline de AWS Lambda o Kinesis Firehose).
+  - **Cloud Composer** $\rightarrow$ Migraría a **AWS MWAA** (Managed Workflows for Apache Airflow) o Azure Data Factory.
 
 ## Desafío 3: Despliegue de payment-api
 
